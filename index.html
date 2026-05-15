@@ -3,9 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>與宋元思書（作者：吳均）　重組練習</title>
+    <title>與宋元思書</title>
     <script src="https://cdn.tailwindcss.com"></script>
     
+    <!-- 引入 SortableJS 實現拖曳排序功能 -->
+    <script src="https://cdn.jsdelivr.net/npm/sortablejs@1.15.2/Sortable.min.js"></script>
+
     <link href="https://cdn.jsdelivr.net/npm/gensen-rounded-web@1.0.1/css/gensen-rounded-tw.css" rel="stylesheet">
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -81,6 +84,18 @@
         }
         .word-item:active:hover {
              box-shadow: none;
+        }
+
+        /* 拖曳時的效果 */
+        .sortable-ghost {
+            opacity: 0.4;
+            background-color: #f3f4f6;
+            border-style: dashed;
+        }
+        .sortable-drag {
+            cursor: grabbing !important;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05);
+            transform: scale(1.05);
         }
 
         /* Drop Zone */
@@ -307,10 +322,15 @@
         const totalCount = exercises.length;
         const synth = window.speechSynthesis;
 
+        // 用於判斷目前是否正在拖曳，防止放開滑鼠/手指時誤觸點擊事件
+        window.isDraggingItem = false;
+
         // --- FUNCTIONS ---
 
         function speak(text, lang = 'zh-TW', rate = 0.95) {
-            if (!text) return;
+            // 🛡️ 語音引擎相容性與空字串防護
+            if (!text || !synth) return; 
+
             synth.cancel();
 
             // 針對與宋元思書進行語音修正
@@ -366,6 +386,48 @@
                 `;
 
                 container.appendChild(card);
+
+                // 畫面渲染完成後，為每一個「作答區」初始化拖曳排序功能 (SortableJS)
+                const zone = document.getElementById(`zone-${ex.id}`);
+                const feedbackEl = card.querySelector('.feedback');
+                
+                new Sortable(zone, {
+                    animation: 150,           // 拖曳時的動畫效果速度
+                    ghostClass: 'sortable-ghost', // 拖曳時下方佔位符的 CSS class
+                    dragClass: 'sortable-drag',   // 正在被拖曳元素的 CSS class
+                    delay: 150,               // 觸控裝置需長按 150 毫秒才能拖曳 (防止誤觸與干擾滑動)
+                    delayOnTouchOnly: true,   // 滑鼠可直接拖曳，僅觸控裝置需要延遲
+
+                    // 開始拖曳時的事件
+                    onStart: function (evt) {
+                        // 標記全域變數為拖曳中，這樣就能有效防止放開時觸發 click 事件
+                        window.isDraggingItem = true;
+                    },
+                    
+                    // 結束拖曳時的事件
+                    onEnd: function (evt) {
+                        // 如果有改變位置（即使在同一個容器內調整順序）
+                        if (evt.oldIndex !== evt.newIndex) {
+                            // 清除視覺狀態
+                            feedbackEl.textContent = '';
+                            zone.classList.remove('correct', 'incorrect');
+                            
+                            // 如果這題原本已經答對，就要取消它的完成狀態並扣除進度
+                            if (zone.dataset.completed) {
+                                delete zone.dataset.completed;
+                                updateProgress(-1);
+                            }
+                        }
+
+                        // 🛡️ 拖曳狀態卡死防護：
+                        // 稍微延遲解除拖曳狀態 (100毫秒)。
+                        // 這樣能完美蓋過滑鼠/手指鬆開瞬間系統判定產生的 Click 事件，
+                        // 同時也能確保即使遇到邊緣滑動等系統手勢中斷拖曳，狀態依然會被重置解鎖。
+                        setTimeout(() => { 
+                            window.isDraggingItem = false; 
+                        }, 100);
+                    }
+                });
             });
         }
 
@@ -375,6 +437,9 @@
 
             // 1. Word Item Click (Chinese blocks)
             if (target.classList.contains('word-item')) {
+                // 🛡️ 拖曳防誤觸判斷：如果系統判定目前正在拖曳中，則取消點擊動作
+                if (window.isDraggingItem) return;
+
                 const card = target.closest('.exercise-card');
                 if (!card) return;
                 const exId = card.dataset.id;
